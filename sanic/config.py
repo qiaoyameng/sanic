@@ -54,6 +54,7 @@ DEFAULT_CONFIG = {
     "LOG_EXTRA": _default,
     "MOTD": True,
     "MOTD_DISPLAY": {},
+    "NFC_PATHS": False,
     "NO_COLOR": False,
     "NOISY_EXCEPTIONS": False,
     "PROXIES_COUNT": None,
@@ -159,6 +160,7 @@ class Config(dict, metaclass=DescriptorMeta):
     LOG_EXTRA: Default | bool
     MOTD: bool
     MOTD_DISPLAY: dict[str, str]
+    NFC_PATHS: bool
     NO_COLOR: bool
     NOISY_EXCEPTIONS: bool
     PROXIES_COUNT: int | None

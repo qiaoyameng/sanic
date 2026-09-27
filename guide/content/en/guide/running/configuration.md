@@ -280,6 +280,7 @@ If a value cannot be cast, it will default to a `str`.
 | KEEP_ALIVE                | True             | Disables keep-alive when False                                                                                                        |
 | MOTD                      | True             | Whether to display the MOTD (message of the day) at startup                                                                           |
 | MOTD_DISPLAY              | {}               | Key/value pairs to display additional, arbitrary data in the MOTD                                                                     |
+| NFC_PATHS                 | False            | Normalize route URIs and request paths to Unicode NFC so equivalent spellings match the same route                                    |
 | NOISY_EXCEPTIONS          | False            | Force all `quiet` exceptions to be logged                                                                                             |
 | PROXIES_COUNT             | None             | The number of proxy servers in front of the app (e.g. nginx; see below)                                                               |
 | REAL_IP_HEADER            | None             | The name of "X-Real-IP" HTTP header that contains real client ip                                                                      |

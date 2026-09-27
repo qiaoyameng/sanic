@@ -38,6 +38,7 @@ from typing import (
     cast,
     overload,
 )
+from unicodedata import normalize
 from urllib.parse import urlencode, urlunparse
 
 from sanic_routing.exceptions import FinalizationError, NotFound
@@ -79,6 +80,7 @@ from sanic.models.futures import (
 )
 from sanic.models.handler_types import ListenerType, MiddlewareType
 from sanic.models.handler_types import Sanic as SanicVar
+from sanic.path import decode_match_params, normalize_request_path
 from sanic.request import Request
 from sanic.response import BaseHTTPResponse, HTTPResponse, ResponseStream
 from sanic.router import Router
@@ -1092,6 +1094,9 @@ class Sanic(
                     "passed to url_for"
                 )
 
+            if self.config.get("NFC_PATHS", False):
+                supplied_param = normalize("NFC", supplied_param)
+
             # determine if the parameter supplied by the caller
             # passes the test in the URL
             if param_info.pattern:
@@ -1311,11 +1316,26 @@ class Sanic(
                 context={"request": request},
             )
             # Fetch handler from router
+            nfc_paths = self.config.get("NFC_PATHS", False)
+            path = request.path
+            if nfc_paths:
+                path = normalize_request_path(path)
             route, handler, kwargs = self.router.get(
-                request.path,
+                path,
                 request.method,
                 request.headers.getone("host", None),
             )
+
+            if (
+                nfc_paths
+                and kwargs
+                and not route.unquote
+                and not route.extra.static
+            ):
+                # Expose decoded NFC parameter values. Routes that unquote
+                # themselves (unquote=True, or the static file handler) are
+                # skipped so values are never decoded twice.
+                kwargs = decode_match_params(kwargs)
 
             request._match_info = {**kwargs}
             request.route = route

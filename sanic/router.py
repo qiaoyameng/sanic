@@ -16,6 +16,7 @@ from sanic.constants import HTTP_METHODS
 from sanic.errorpages import check_error_format
 from sanic.exceptions import MethodNotAllowed, NotFound, SanicException
 from sanic.models.handler_types import RouteHandler
+from sanic.path import normalize_route_uri
 
 
 ROUTER_CACHE_SIZE = 1024
@@ -114,6 +115,10 @@ class Router(BaseRouter):
         if version is not None:
             version = str(version).strip("/").lstrip("v")
             uri = "/".join([f"{version_prefix}{version}", uri.lstrip("/")])
+
+        app = getattr(self.ctx, "app", None)
+        if app is not None and app.config.get("NFC_PATHS", False):
+            uri = normalize_route_uri(uri)
 
         uri = self._normalize(uri, handler)
 

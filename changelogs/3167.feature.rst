@@ -1,0 +1,3 @@
+Adds ``NFC_PATHS`` configuration value for optional Unicode NFC path normalization
+
+When enabled, route registrations and incoming request paths are normalized to a canonical NFC, percent-encoded form so that equivalent Unicode spellings (for example ``é`` as U+00E9 or as ``e`` + U+0301) resolve to the same route, and ``url_for`` generates the canonical form. Normalization never decodes ``%2F``/``%5C`` into new path hierarchy, decodes percent-encoding exactly once, and leaves invalid UTF-8 segments untouched. Routes that normalize to the same path now raise ``RouteExists`` instead of silently coexisting.
