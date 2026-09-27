@@ -29,6 +29,8 @@ class FutureRoute(NamedTuple):
     version_prefix: str
     error_format: str | None
     route_context: HashableDict
+    consumes: tuple[str, ...] = ()
+    produces: tuple[str, ...] = ()
 
 
 class FutureListener(NamedTuple):

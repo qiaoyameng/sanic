@@ -16,12 +16,14 @@ from sanic.exceptions import (
     InternalServerError,
     InvalidHeader,
     MethodNotAllowed,
+    NotAcceptable,
     NotFound,
     RangeNotSatisfiable,
     SanicException,
     ServerError,
     ServiceUnavailable,
     Unauthorized,
+    UnsupportedMediaType,
 )
 from sanic.request import Request
 from sanic.response import (
@@ -69,12 +71,14 @@ __all__ = (
     "InternalServerError",
     "InvalidHeader",
     "MethodNotAllowed",
+    "NotAcceptable",
     "NotFound",
     "RangeNotSatisfiable",
     "SanicException",
     "ServerError",
     "ServiceUnavailable",
     "Unauthorized",
+    "UnsupportedMediaType",
     # Common response methods
     "empty",
     "file",

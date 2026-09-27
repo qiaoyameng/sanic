@@ -3,19 +3,25 @@ from __future__ import annotations
 from collections.abc import Iterable
 from functools import lru_cache
 from inspect import signature
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sanic_routing import BaseRouter
-from sanic_routing.exceptions import NoMethod
+from sanic_routing.exceptions import NoMethod, RouteExists
 from sanic_routing.exceptions import NotFound as RoutingNotFound
 from sanic_routing.group import RouteGroup
 from sanic_routing.route import Route
+from sanic_routing.utils import parts_to_path, path_to_parts
 
 from sanic.constants import HTTP_METHODS
 from sanic.errorpages import check_error_format
 from sanic.exceptions import MethodNotAllowed, NotFound, SanicException
 from sanic.models.handler_types import RouteHandler
+from sanic.negotiation import (
+    filter_by_content_type,
+    normalize_media_types,
+    select_by_accept,
+)
 
 
 ROUTER_CACHE_SIZE = 1024
@@ -28,11 +34,22 @@ class Router(BaseRouter):
     DEFAULT_METHOD = "GET"
     ALLOWED_METHODS = HTTP_METHODS
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._content_variants: dict[
+            tuple[str, frozenset[str] | None, str | None], list[Route]
+        ] = {}
+
     def _get(
-        self, path: str, method: str, host: str | None
+        self,
+        path: str,
+        method: str,
+        host: str | None,
+        content_type: str | None = None,
+        accept: str | None = None,
     ) -> tuple[Route, RouteHandler, dict[str, Any]]:
         try:
-            return self.resolve(
+            route, handler, match_info = self.resolve(
                 path=path,
                 method=method,
                 extra={"host": host} if host else None,
@@ -40,17 +57,51 @@ class Router(BaseRouter):
         except RoutingNotFound as e:
             raise NotFound(f"Requested URL {e.path} not found") from None
         except NoMethod as e:
-            raise MethodNotAllowed(
+            error = MethodNotAllowed(
                 f"Method {method} not allowed for URL {path}",
                 method=method,
                 allowed_methods=tuple(e.allowed_methods)
                 if e.allowed_methods
                 else None,
-            ) from None
+            )
+            if method != "HEAD":
+                raise error from None
+            # A HEAD request may be served by a content-negotiated GET
+            # route, since the response body is discarded either way.
+            try:
+                route, handler, match_info = self.resolve(
+                    path=path,
+                    method="GET",
+                    extra={"host": host} if host else None,
+                )
+            except (RoutingNotFound, NoMethod):
+                raise error from None
+            variants = getattr(route.extra, "variants", None)
+            if not variants or not any(
+                variant.extra.consumes or variant.extra.produces
+                for variant in variants
+            ):
+                raise error from None
+
+        variants = getattr(route.extra, "variants", None)
+        if variants and any(
+            variant.extra.consumes or variant.extra.produces
+            for variant in variants
+        ):
+            candidates = filter_by_content_type(variants, content_type)
+            route = select_by_accept(candidates, accept)
+            handler = route.handler
+
+        return route, handler, match_info
 
     @lru_cache(maxsize=ROUTER_CACHE_SIZE)
     def get(  # type: ignore
-        self, path: str, method: str, host: str | None
+        self,
+        path: str,
+        method: str,
+        host: str | None,
+        content_type: str | None = None,
+        accept: str | None = None,
     ) -> tuple[Route, RouteHandler, dict[str, Any]]:
         """Retrieve a `Route` object containing the details about how to handle a response for a given request
 
@@ -64,16 +115,22 @@ class Router(BaseRouter):
             path (str): the path of the route
             method (str): the HTTP method of the route
             host (Optional[str]): the host of the route
+            content_type (Optional[str]): the Content-Type header of the
+                request, used to select between route variants
+            accept (Optional[str]): the Accept header of the request, used
+                to select between route variants
 
         Raises:
             NotFound: if the route is not found
             MethodNotAllowed: if the method is not allowed for the route
+            UnsupportedMediaType: if no variant can consume the request body
+            NotAcceptable: if no variant can produce an acceptable response
 
         Returns:
             Tuple[Route, RouteHandler, Dict[str, Any]]: the route, handler, and match info
         """  # noqa: E501
         __tracebackhide__ = True
-        return self._get(path, method, host)
+        return self._get(path, method, host, content_type, accept)
 
     def add(  # type: ignore
         self,
@@ -91,6 +148,8 @@ class Router(BaseRouter):
         version_prefix: str = "/v",
         overwrite: bool = False,
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
     ) -> Route | list[Route]:
         """Add a handler to the router
 
@@ -106,6 +165,12 @@ class Router(BaseRouter):
                 Defaults to False.
             version (Union[str, float, int], optional): A version modifier for the uri. Defaults to None.
             name (Optional[str], optional): An identifying name of the route. Defaults to None.
+            consumes (Optional[Union[str, Iterable[str]]], optional): Media
+                types the handler can consume. Allows multiple handlers on
+                the same path and method, selected by Content-Type.
+            produces (Optional[Union[str, Iterable[str]]], optional): Media
+                types the handler can produce. Selects between handlers on
+                the same path and method using the Accept header.
 
         Returns:
             Route: The route object.
@@ -116,6 +181,8 @@ class Router(BaseRouter):
             uri = "/".join([f"{version_prefix}{version}", uri.lstrip("/")])
 
         uri = self._normalize(uri, handler)
+        consumes = normalize_media_types(consumes)
+        produces = normalize_media_types(produces)
 
         params = dict(
             path=uri,
@@ -146,13 +213,64 @@ class Router(BaseRouter):
                     else "__unnamed__"
                 )
 
-            route = super().add(**params)  # type: ignore
+            route_methods = cast("frozenset[str] | None", params["methods"])
+            key = (uri, route_methods, host)
+            variants = self._content_variants.get(key)
+            if overwrite and variants is not None:
+                self._content_variants.pop(key)
+                variants = None
+
+            if variants is not None and (
+                consumes
+                or produces
+                or any(
+                    variant.extra.consumes or variant.extra.produces
+                    for variant in variants
+                )
+            ):
+                # Another handler for a path/method that already has one:
+                # allowed only as a content-negotiated variant. Identical
+                # consumes/produces pairs are ambiguous and rejected.
+                for existing in variants:
+                    if (existing.extra.consumes, existing.extra.produces) == (
+                        consumes,
+                        produces,
+                    ):
+                        methods = (
+                            ",".join(sorted(route_methods or ()))
+                            or self.DEFAULT_METHOD
+                        )
+                        raise RouteExists(
+                            f"Route already registered: {methods} {uri} "
+                            f"with consumes={consumes or 'any'} and "
+                            f"produces={produces or 'any'}. Routes that "
+                            "share a path and method must declare distinct "
+                            "consumes/produces media types."
+                        )
+                route = self._add_variant(
+                    uri,
+                    ident,
+                    params,
+                    strict_slashes,
+                    unquote,
+                    host,
+                )
+                route.extra.content_variant_of = variants[0]
+                variants.append(route)
+            else:
+                route = super().add(**params)  # type: ignore
+                variants = [route]
+                self._content_variants[key] = variants
+
+            route.extra.variants = variants
             route.extra.ident = ident
             route.extra.ignore_body = ignore_body
             route.extra.stream = stream
             route.extra.hosts = hosts
             route.extra.static = static
             route.extra.error_format = error_format
+            route.extra.consumes = consumes
+            route.extra.produces = produces
 
             if error_format:
                 check_error_format(route.extra.error_format)
@@ -162,6 +280,43 @@ class Router(BaseRouter):
         if len(routes) == 1:
             return routes[0]
         return routes
+
+    def _add_variant(
+        self,
+        uri: str,
+        name: str | None,
+        params: dict[str, Any],
+        strict_slashes: bool,
+        unquote: bool,
+        host: str | None,
+    ) -> Route:
+        """Create a route object for a content-negotiated variant.
+
+        The variant is not added to the routing tree itself. Instead, it is
+        attached to the primary route of its path/method signature and is
+        selected through content negotiation at resolve time.
+        """
+        path = parts_to_path(
+            path_to_parts(uri, self.delimiter), self.delimiter
+        )
+        strip = path.lstrip if strict_slashes else path.strip
+        path = strip(self.delimiter)
+        requirements = {"host": host} if host else None
+        route = self.route_class(
+            self,
+            path,
+            name or "",
+            handler=params["handler"],
+            methods=params["methods"] or frozenset({self.DEFAULT_METHOD}),
+            requirements=requirements,
+            strict=strict_slashes,
+            unquote=unquote,
+            static="<" not in path and requirements is None,
+            regex=self._is_regex(path),
+        )
+        if name:
+            self.name_index[name] = route
+        return route
 
     @lru_cache(maxsize=ROUTER_CACHE_SIZE)
     def find_route_by_view_name(
@@ -188,6 +343,20 @@ class Router(BaseRouter):
             return None
 
         return route
+
+    @property
+    def routes(self) -> tuple[Route, ...]:
+        """Return all routes, including content-negotiated variants.
+
+        Returns:
+            Tuple[Route, ...]: a tuple of routes
+        """
+        variants = tuple(
+            route
+            for group in self._content_variants.values()
+            for route in group[1:]
+        )
+        return super().routes + variants
 
     @property
     def routes_all(self) -> dict[tuple[str, ...], Route]:

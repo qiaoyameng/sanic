@@ -1,0 +1,10 @@
+Content negotiation for routes with ``consumes`` and ``produces``
+
+Route declarations (including on blueprints) now accept ``consumes`` and
+``produces`` media types, allowing multiple handlers to be registered for
+the same path and method. The handler is selected first by the request
+``Content-Type`` and then by the ``Accept`` header (q values, wildcards,
+and parameters). Requests that cannot be consumed receive a ``415``, and
+requests whose ``Accept`` cannot be satisfied receive a ``406``. HEAD
+requests are negotiated against matching GET routes, and the router cache
+keys include the content headers so each negotiation is cached separately.

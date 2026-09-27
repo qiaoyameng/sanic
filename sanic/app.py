@@ -1315,6 +1315,8 @@ class Sanic(
                 request.path,
                 request.method,
                 request.headers.getone("host", None),
+                request.headers.getone("content-type", None),
+                request.headers.getone("accept", None),
             )
 
             request._match_info = {**kwargs}
@@ -2375,7 +2377,18 @@ class Sanic(
         self.signalize(self.config.TOUCHUP)
         self.finalize()
 
-        route_names = [route.extra.ident for route in self.router.routes]
+        # Content-negotiated variants of the same endpoint may share a
+        # name, so duplicates are only checked across distinct endpoints.
+        route_names = []
+        seen_idents = set()
+        for route in self.router.routes:
+            endpoint = (
+                getattr(route.extra, "content_variant_of", None) or route
+            )
+            key = (route.extra.ident, id(endpoint))
+            if key not in seen_idents:
+                seen_idents.add(key)
+                route_names.append(route.extra.ident)
         duplicates = {
             name for name in route_names if route_names.count(name) > 1
         }

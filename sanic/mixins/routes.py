@@ -19,6 +19,7 @@ from sanic.errorpages import RESPONSE_MAPPING
 from sanic.mixins.base import BaseMixin
 from sanic.models.futures import FutureRoute, FutureStatic
 from sanic.models.handler_types import RouteHandler
+from sanic.negotiation import normalize_media_types
 from sanic.types import HashableDict
 
 
@@ -52,6 +53,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         static: bool = False,
         version_prefix: str = "/v",
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteWrapper:
         """Decorate a function to be registered as a route.
@@ -77,6 +80,13 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix (str): URL path that should be before the version
                  value; default: `"/v"`.
             error_format (Optional[str]): Error format for the route.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types the
+                handler can consume. Multiple handlers may share a path and
+                method when they declare different media types; the handler
+                is then selected using the ``Content-Type`` of the request.
+            produces (Optional[Union[str, Iterable[str]]]): Media types the
+                handler can produce. Used with the ``Accept`` header to
+                select between handlers that share a path and method.
             ctx_kwargs (Any): Keyword arguments that begin with a `ctx_*`
                 prefix will be appended to the route context (`route.ctx`).
 
@@ -174,6 +184,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
                 version_prefix,
                 error_format,
                 route_context,
+                normalize_media_types(consumes),
+                normalize_media_types(produces),
             )
             overwrite = getattr(self, "_allow_route_overwrite", False)
             if overwrite:
@@ -223,6 +235,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         version_prefix: str = "/v",
         error_format: str | None = None,
         unquote: bool = False,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteHandler:
         """A helper method to register class-based view or functions as a handler to the application url routes.
@@ -301,6 +315,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix=version_prefix,
             error_format=error_format,
             unquote=unquote,
+            consumes=consumes,
+            produces=produces,
             **ctx_kwargs,
         )(handler)
         return handler
@@ -316,6 +332,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         ignore_body: bool = True,
         version_prefix: str = "/v",
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteHandler:
         """Decorate a function handler to create a route definition using the **GET** HTTP method.
@@ -336,6 +354,18 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix (str): URL path that should be before the version
                 value. Defaults to `"/v"`.
             error_format (Optional[str]): Custom error format string.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can consume, used to select between handlers
+                that share a path and method.
+            produces (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can produce, used to select between handlers
+                that share a path and method.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can consume, used to select between handlers
+                that share a path and method.
+            produces (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can produce, used to select between handlers
+                that share a path and method.
             **ctx_kwargs (Any): Keyword arguments that begin with a
                 `ctx_* prefix` will be appended to the route
                 context (`route.ctx`).
@@ -355,6 +385,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
                 ignore_body=ignore_body,
                 version_prefix=version_prefix,
                 error_format=error_format,
+                consumes=consumes,
+                produces=produces,
                 **ctx_kwargs,
             ),
         )
@@ -369,6 +401,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         name: str | None = None,
         version_prefix: str = "/v",
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteHandler:
         """Decorate a function handler to create a route definition using the **POST** HTTP method.
@@ -387,6 +421,12 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix (str): URL path that should be before the version
                 value. Defaults to `"/v"`.
             error_format (Optional[str]): Custom error format string.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can consume, used to select between handlers
+                that share a path and method.
+            produces (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can produce, used to select between handlers
+                that share a path and method.
             **ctx_kwargs (Any): Keyword arguments that begin with a
                 `ctx_*` prefix will be appended to the route
                 context (`route.ctx`).
@@ -406,6 +446,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
                 name=name,
                 version_prefix=version_prefix,
                 error_format=error_format,
+                consumes=consumes,
+                produces=produces,
                 **ctx_kwargs,
             ),
         )
@@ -420,6 +462,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         name: str | None = None,
         version_prefix: str = "/v",
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteHandler:
         """Decorate a function handler to create a route definition using the **PUT** HTTP method.
@@ -438,6 +482,12 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix (str): URL path that should be before the version
                 value. Defaults to `"/v"`.
             error_format (Optional[str]): Custom error format string.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can consume, used to select between handlers
+                that share a path and method.
+            produces (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can produce, used to select between handlers
+                that share a path and method.
             **ctx_kwargs (Any): Keyword arguments that begin with a
                 `ctx_*` prefix will be appended to the route
                 context (`route.ctx`).
@@ -457,6 +507,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
                 name=name,
                 version_prefix=version_prefix,
                 error_format=error_format,
+                consumes=consumes,
+                produces=produces,
                 **ctx_kwargs,
             ),
         )
@@ -471,6 +523,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         ignore_body: bool = True,
         version_prefix: str = "/v",
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteHandler:
         """Decorate a function handler to create a route definition using the **HEAD** HTTP method.
@@ -491,6 +545,12 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix (str): URL path that should be before the version
                 value. Defaults to `"/v"`.
             error_format (Optional[str]): Custom error format string.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can consume, used to select between handlers
+                that share a path and method.
+            produces (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can produce, used to select between handlers
+                that share a path and method.
             **ctx_kwargs (Any): Keyword arguments that begin with a
                 `ctx_*` prefix will be appended to the route
                 context (`route.ctx`).
@@ -510,6 +570,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
                 ignore_body=ignore_body,
                 version_prefix=version_prefix,
                 error_format=error_format,
+                consumes=consumes,
+                produces=produces,
                 **ctx_kwargs,
             ),
         )
@@ -524,6 +586,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         ignore_body: bool = True,
         version_prefix: str = "/v",
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteHandler:
         """Decorate a function handler to create a route definition using the **OPTIONS** HTTP method.
@@ -544,6 +608,12 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix (str): URL path that should be before the version
                 value. Defaults to `"/v"`.
             error_format (Optional[str]): Custom error format string.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can consume, used to select between handlers
+                that share a path and method.
+            produces (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can produce, used to select between handlers
+                that share a path and method.
             **ctx_kwargs (Any): Keyword arguments that begin with a
                 `ctx_*` prefix will be appended to the route
                 context (`route.ctx`).
@@ -563,6 +633,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
                 ignore_body=ignore_body,
                 version_prefix=version_prefix,
                 error_format=error_format,
+                consumes=consumes,
+                produces=produces,
                 **ctx_kwargs,
             ),
         )
@@ -577,6 +649,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         name: str | None = None,
         version_prefix: str = "/v",
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteHandler:
         """Decorate a function handler to create a route definition using the **PATCH** HTTP method.
@@ -595,6 +669,12 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix (str): URL path that should be before the version
                 value. Defaults to `"/v"`.
             error_format (Optional[str]): Custom error format string.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can consume, used to select between handlers
+                that share a path and method.
+            produces (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can produce, used to select between handlers
+                that share a path and method.
             **ctx_kwargs (Any): Keyword arguments that begin with a
                 `ctx_*` prefix will be appended to the route
                 context (`route.ctx`).
@@ -614,6 +694,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
                 name=name,
                 version_prefix=version_prefix,
                 error_format=error_format,
+                consumes=consumes,
+                produces=produces,
                 **ctx_kwargs,
             ),
         )
@@ -628,6 +710,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
         ignore_body: bool = False,
         version_prefix: str = "/v",
         error_format: str | None = None,
+        consumes: str | Iterable[str] | None = None,
+        produces: str | Iterable[str] | None = None,
         **ctx_kwargs: Any,
     ) -> RouteHandler:
         """Decorate a function handler to create a route definition using the **DELETE** HTTP method.
@@ -646,6 +730,12 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
             version_prefix (str): URL path that should be before the version
                 value. Defaults to `"/v"`.
             error_format (Optional[str]): Custom error format string.
+            consumes (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can consume, used to select between handlers
+                that share a path and method.
+            produces (Optional[Union[str, Iterable[str]]]): Media types
+                the handler can produce, used to select between handlers
+                that share a path and method.
             **ctx_kwargs (Any): Keyword arguments that begin with a `ctx_*`
                 prefix will be appended to the route context (`route.ctx`).
 
@@ -664,6 +754,8 @@ class RouteMixin(BaseMixin, metaclass=SanicMeta):
                 ignore_body=ignore_body,
                 version_prefix=version_prefix,
                 error_format=error_format,
+                consumes=consumes,
+                produces=produces,
                 **ctx_kwargs,
             ),
         )
