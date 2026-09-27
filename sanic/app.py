@@ -1418,7 +1418,10 @@ class Sanic(
                 )
                 await response.eof()
             else:
-                if not hasattr(handler, "is_websocket"):
+                if (
+                    not hasattr(handler, "is_websocket")
+                    and request.upgrade_handler is None
+                ):
                     raise ServerError(
                         f"Invalid response type {response!r} "
                         "(need HTTPResponse)"

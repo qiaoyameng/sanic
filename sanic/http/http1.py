@@ -24,6 +24,7 @@ from sanic.helpers import has_message_body
 from sanic.http.constants import Stage
 from sanic.http.stream import Stream
 from sanic.log import access_logger, error_logger, logger
+from sanic.server.upgrade import UpgradeConnection
 from sanic.touchup import TouchUpMeta
 
 
@@ -71,6 +72,7 @@ class Http(Stream, metaclass=TouchUpMeta):
         "response_size",
         "response_bytes_left",
         "upgrade_websocket",
+        "upgraded",
         "perft0",
     ]
 
@@ -95,6 +97,7 @@ class Http(Stream, metaclass=TouchUpMeta):
         self.request: Request = None
         self.response: BaseHTTPResponse = None
         self.upgrade_websocket = False
+        self.upgraded = False
         self.url = None
         self.perft0 = None
 
@@ -123,8 +126,15 @@ class Http(Stream, metaclass=TouchUpMeta):
                 await self.protocol.request_handler(self.request)
 
                 # Handler finished, response should've been sent
-                if self.stage is Stage.HANDLER and not self.upgrade_websocket:
-                    raise ServerError("Handler produced no response")
+                if self.stage is Stage.HANDLER:
+                    if (
+                        self.request is not None
+                        and self.request.upgrade_handler is not None
+                    ):
+                        await self.perform_upgrade()
+                        self.keep_alive = False
+                    elif not self.upgrade_websocket:
+                        raise ServerError("Handler produced no response")
 
                 if self.stage is Stage.RESPONSE:
                     await self.response.send(end_stream=True)
@@ -415,8 +425,63 @@ class Http(Stream, metaclass=TouchUpMeta):
             await self._send(data)
         self.response_bytes_left = bytes_left
 
+    async def perform_upgrade(self) -> None:
+        """Send a 101 response and hand the connection over to the
+        takeover handler registered with ``Request.accept_upgrade``.
+
+        Until the 101 response has been sent, regular HTTP error
+        handling applies. Once it is sent, the connection belongs to
+        the new protocol: the takeover handler is responsible for it,
+        and Sanic only releases the transport (it is never reused for
+        HTTP) once the handler returns, raises, or the server stops.
+        """
+        request = self.request
+        handler = request.upgrade_handler
+        if handler is None:
+            return
+        token = request.headers.getone("upgrade", "")
+        await self._send(
+            (
+                "HTTP/1.1 101 Switching Protocols\r\n"
+                f"Upgrade: {token}\r\n"
+                "Connection: upgrade\r\n"
+                "\r\n"
+            ).encode()
+        )
+        # Point of no return: this connection must never produce an
+        # HTTP response again.
+        self.upgraded = True
+        # Any request body is not consumed by Sanic; leftover bytes
+        # belong to the new protocol.
+        self.request_body = None
+        protocol = self.protocol
+        connection = UpgradeConnection(
+            protocol, request, buffered=bytes(self.recv_buffer)
+        )
+        del self.recv_buffer[:]
+        protocol.upgraded_connection = connection
+        if protocol.transport is not None:
+            protocol.transport.resume_reading()
+        try:
+            await handler(connection)
+        except CancelledError:
+            # Server is stopping or the client went away. The transport
+            # is released below, nothing more to do.
+            pass
+        except Exception:
+            error_logger.exception("protocol.perform_upgrade uncaught")
+        finally:
+            protocol.upgraded_connection = None
+            connection.close()
+            self.stage = Stage.IDLE
+
     async def error_response(self, exception: Exception) -> None:
         """Handle response when exception encountered"""
+        if self.upgraded:
+            # The connection was handed over to another protocol.
+            # HTTP error handling no longer applies to it.
+            return
+
         # Disconnect after an error if in any other state than handler
         if self.stage is not Stage.HANDLER:
             self.keep_alive = False

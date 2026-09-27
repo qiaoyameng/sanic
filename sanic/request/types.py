@@ -22,9 +22,12 @@ from sanic.models.http_types import Credentials
 
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sanic.app import Sanic
     from sanic.config import Config
     from sanic.server import ConnInfo
+    from sanic.server.upgrade import UpgradeConnection
 
 import uuid
 
@@ -115,6 +118,7 @@ class Request(Generic[sanic_type, ctx_type]):
         "_scheme",
         "_socket",
         "_stream_id",
+        "_upgrade_handler",
         "_match_info",
         "_name",
         "app",
@@ -194,6 +198,9 @@ class Request(Generic[sanic_type, ctx_type]):
         self.parsed_token: str | None = None
         self._request_middleware_started = False
         self._response_middleware_started = False
+        self._upgrade_handler: (
+            Callable[[UpgradeConnection], Awaitable[Any]] | None
+        ) = None
         self.responded: bool = False
         self.route: Route | None = None
         self.stream: Stream | None = None
@@ -412,6 +419,79 @@ class Request(Generic[sanic_type, ctx_type]):
             )
         self.responded = True
         return response
+
+    def accept_upgrade(
+        self,
+        handler: Callable[[UpgradeConnection], Awaitable[Any]],
+    ) -> None:
+        """Accept a protocol upgrade requested by the client.
+
+        This is the registration entry point for reusing Sanic's
+        listening port with a custom (non-WebSocket) protocol through
+        an HTTP ``Upgrade`` handshake. A route may either reject the
+        upgrade by returning a regular HTTP response, or accept it by
+        calling this method with an async takeover handler and
+        returning ``None``:
+
+        ```python
+        @app.get("/echo")
+        async def echo(request: Request):
+            if request.headers.get("upgrade") != "myproto":
+                return text("Upgrade required", status=426)
+            return request.accept_upgrade(echo_handler)
+        ```
+
+        Sanic then sends ``101 Switching Protocols`` and awaits
+        ``handler`` with an
+        :class:`~sanic.server.upgrade.UpgradeConnection` that provides
+        raw access to the connection, including any bytes the client
+        already sent after the request headers.
+
+        Until the 101 response has been sent, regular HTTP error
+        handling applies. Afterwards the takeover handler owns the
+        connection; see
+        :class:`~sanic.server.upgrade.UpgradeConnection` for who
+        releases the transport on close, handler failure, and server
+        stop.
+
+        Args:
+            handler: Async callable taking over the connection. It
+                receives an ``UpgradeConnection`` as its only argument.
+
+        Raises:
+            ServerError: If the request is not an upgrade request, a
+                response was already sent, the upgrade was already
+                accepted, or the connection does not support upgrades
+                (upgrades require the built-in HTTP/1.1 server).
+        """
+        if self._upgrade_handler is not None:
+            raise ServerError("Protocol upgrade was already accepted")
+        if self.responded:
+            raise ServerError(
+                "Cannot accept a protocol upgrade: a response was already sent"
+            )
+        token = self.headers.getone("upgrade", None)
+        connection = self.headers.getone("connection", "")
+        if token is None or "upgrade" not in connection.lower():
+            raise ServerError(
+                "Cannot accept a protocol upgrade: the request does "
+                "not include 'Connection: upgrade' and 'Upgrade' headers"
+            )
+        if self.stream is None or not hasattr(self.stream, "perform_upgrade"):
+            raise ServerError(
+                "Protocol upgrades are not supported on this connection"
+            )
+        if not callable(handler):
+            raise ServerError("Upgrade handler must be callable")
+        self._upgrade_handler = handler
+
+    @property
+    def upgrade_handler(
+        self,
+    ) -> Callable[[UpgradeConnection], Awaitable[Any]] | None:
+        """The takeover handler registered with :meth:`accept_upgrade`,
+        if any."""
+        return self._upgrade_handler
 
     async def receive_body(self):
         """Receive request.body, if not already received.

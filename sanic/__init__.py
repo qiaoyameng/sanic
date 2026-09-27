@@ -34,6 +34,7 @@ from sanic.response import (
     redirect,
     text,
 )
+from sanic.server.upgrade import UpgradeConnection
 from sanic.server.websockets.impl import WebsocketImplProtocol as Websocket
 
 
@@ -56,6 +57,7 @@ __all__ = (
     "HTTPMethod",
     "HTTPResponse",
     "Request",
+    "UpgradeConnection",
     "Websocket",
     # Common types
     "DefaultSanic",

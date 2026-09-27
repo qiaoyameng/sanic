@@ -11,6 +11,7 @@ from sanic.touchup.meta import TouchUpMeta
 
 if TYPE_CHECKING:
     from sanic.app import Sanic
+    from sanic.server.upgrade import UpgradeConnection
 
 
 from asyncio import CancelledError
@@ -117,6 +118,7 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
         "_exception",
         "recv_buffer",
         "_callback_check_timeouts",
+        "upgraded_connection",
     )
 
     def __init__(
@@ -144,6 +146,7 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
             self.state["requests_count"] = 0
         self._exception = None
         self._callback_check_timeouts = None
+        self.upgraded_connection: UpgradeConnection | None = None
 
     async def connection_task(self):  # no cov
         """
@@ -170,6 +173,7 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
                 and self._http
                 and self.transport
                 and not self._http.upgrade_websocket
+                and not self._http.upgraded
             ):
                 self.log_disconnect()
             self._http = None
@@ -219,9 +223,11 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
             elif stage is Stage.REQUEST and duration > self.request_timeout:
                 logger.debug("Request Timeout. Closing connection.")
                 self._http.exception = RequestTimeout("Request Timeout")
-            elif stage is Stage.HANDLER and self._http.upgrade_websocket:
+            elif stage is Stage.HANDLER and (
+                self._http.upgrade_websocket or self._http.upgraded
+            ):
                 websockets_logger.debug(
-                    "Handling websocket. Timeouts disabled."
+                    "Handling upgraded connection. Timeouts disabled."
                 )
                 return
             elif (
@@ -281,6 +287,11 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
 
         :return: boolean - True if closed, false if staying open
         """
+        if self.upgraded_connection is not None:
+            # Server is stopping: Sanic releases the transport. The
+            # takeover handler observes EOF and should finish.
+            self.upgraded_connection.close()
+            return True
         if self.http is None or self.http.stage is Stage.IDLE:
             self.close()
             return True
@@ -305,9 +316,26 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
         except Exception:
             error_logger.exception("protocol.connect_made")
 
+    def connection_lost(self, exc):
+        if self.upgraded_connection is not None:
+            self.upgraded_connection._connection_lost()
+        super().connection_lost(exc)
+
+    def eof_received(self) -> bool | None:
+        if self.upgraded_connection is not None:
+            # Keep the write side open and let the takeover handler
+            # decide when to close the connection.
+            self.upgraded_connection.feed_eof()
+            return True
+        return None
+
     def data_received(self, data: bytes):
         try:
             self._time = current_time()
+            if self.upgraded_connection is not None:
+                # The connection was handed over to another protocol
+                self.upgraded_connection.feed_data(data)
+                return
             if not data:
                 return self.close()
             self.recv_buffer += data
