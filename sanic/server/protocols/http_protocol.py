@@ -11,6 +11,7 @@ from sanic.touchup.meta import TouchUpMeta
 
 if TYPE_CHECKING:
     from sanic.app import Sanic
+    from sanic.server.upgrade import Upgrade, UpgradeConnection
 
 
 from asyncio import CancelledError
@@ -19,6 +20,7 @@ from time import monotonic as current_time
 from sanic.exceptions import (
     RequestCancelled,
     RequestTimeout,
+    ServerError,
     ServiceUnavailable,
 )
 from sanic.http import Http, Stage
@@ -32,6 +34,7 @@ from sanic.log import (
 from sanic.models.server_types import ConnInfo
 from sanic.request import Request
 from sanic.server.protocols.base_protocol import SanicProtocol
+from sanic.server.upgrade import UpgradeConnection
 
 
 ConnectionProtocol = type("ConnectionProtocol", (), {})
@@ -114,6 +117,7 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
         "url",
         "_handler_task",
         "_http",
+        "_upgrade",
         "_exception",
         "recv_buffer",
         "_callback_check_timeouts",
@@ -142,6 +146,7 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
         self._setup()
         if "requests_count" not in self.state:
             self.state["requests_count"] = 0
+        self._upgrade: UpgradeConnection | None = None
         self._exception = None
         self._callback_check_timeouts = None
 
@@ -170,6 +175,7 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
                 and self._http
                 and self.transport
                 and not self._http.upgrade_websocket
+                and not self._http.upgraded
             ):
                 self.log_disconnect()
             self._http = None
@@ -222,6 +228,11 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
             elif stage is Stage.HANDLER and self._http.upgrade_websocket:
                 websockets_logger.debug(
                     "Handling websocket. Timeouts disabled."
+                )
+                return
+            elif stage is Stage.HANDLER and self._http.upgraded:
+                logger.debug(
+                    "Handling upgraded connection. Timeouts disabled."
                 )
                 return
             elif (
@@ -281,14 +292,71 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
 
         :return: boolean - True if closed, false if staying open
         """
+        if self._upgrade is not None:
+            # Upgraded connections are never idle. The server is shutting
+            # down, so close the transport; connection_lost will cancel
+            # the task running the upgrade handler.
+            self._upgrade.feed_eof()
+            self.close()
+            return True
         if self.http is None or self.http.stage is Stage.IDLE:
             self.close()
             return True
         return False
 
+    async def upgrade_handshake(
+        self, request: Request, upgrade: Upgrade
+    ) -> UpgradeConnection:
+        """
+        Perform a generic HTTP Upgrade handshake.
+
+        Sends a ``101 Switching Protocols`` response and returns an
+        :class:`~sanic.server.upgrade.UpgradeConnection` that takes over
+        the underlying transport. Bytes received after the request
+        headers (e.g. sent in the same TCP packet) are preserved on the
+        returned connection.
+        """
+        if self._upgrade is not None:
+            raise ServerError("Connection has already been upgraded")
+        protocol_name = request.headers.getone("upgrade", "")
+        if not protocol_name:
+            raise ServerError(
+                "Cannot upgrade a request without an Upgrade header"
+            )
+        headers = {
+            "connection": "upgrade",
+            "upgrade": protocol_name,
+            **(upgrade.headers or {}),
+        }
+        response = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            + "".join(
+                f"{name}: {value}\r\n" for name, value in headers.items()
+            )
+            + "\r\n"
+        ).encode()
+        await self.send(response)
+        # From this point on the HTTP layer no longer owns the connection
+        self._http.upgraded = True
+        connection = UpgradeConnection(self, request)
+        # Preserve any bytes the client already sent after the headers
+        if self._http.recv_buffer:
+            connection.feed_data(bytes(self._http.recv_buffer))
+            del self._http.recv_buffer[:]
+        self._upgrade = connection
+        return connection
+
     # -------------------------------------------- #
     # Only asyncio.Protocol callbacks below this
     # -------------------------------------------- #
+
+    def connection_lost(self, exc):
+        """
+        Notify an upgraded connection that the transport is gone
+        """
+        if self._upgrade is not None:
+            self._upgrade.feed_eof()
+        super().connection_lost(exc)
 
     def connection_made(self, transport):
         """
@@ -310,6 +378,17 @@ class HttpProtocol(HttpProtocolMixin, SanicProtocol, metaclass=TouchUpMeta):
             self._time = current_time()
             if not data:
                 return self.close()
+            if self._upgrade is not None:
+                # The connection was upgraded. Feed the raw bytes to the
+                # protocol that took over instead of the HTTP parser.
+                self._upgrade.feed_data(data)
+                if (
+                    self._upgrade.buffered
+                    >= self.app.config.REQUEST_BUFFER_SIZE
+                    and self.transport
+                ):
+                    self.transport.pause_reading()
+                return
             self.recv_buffer += data
 
             if (

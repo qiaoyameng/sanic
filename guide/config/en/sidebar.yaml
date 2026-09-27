@@ -39,6 +39,8 @@ root:
                   path: guide/advanced/streaming.html
                 - label: Websockets
                   path: guide/advanced/websockets.html
+                - label: HTTP Upgrade
+                  path: guide/advanced/upgrade.html
                 - label: Versioning
                   path: guide/advanced/versioning.html
                 - label: Signals

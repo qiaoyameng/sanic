@@ -82,6 +82,7 @@ from sanic.models.handler_types import Sanic as SanicVar
 from sanic.request import Request
 from sanic.response import BaseHTTPResponse, HTTPResponse, ResponseStream
 from sanic.router import Router
+from sanic.server.upgrade import Upgrade
 from sanic.server.websockets.impl import ConnectionClosed
 from sanic.signals import Event, Signal, SignalRouter
 from sanic.touchup import TouchUp, TouchUpMeta
@@ -97,6 +98,8 @@ if TYPE_CHECKING:
         from sanic_ext.extensions.base import Extension  # type: ignore
     except ImportError:
         Extend = TypeVar("Extend", type)  # type: ignore
+
+    from sanic.server.protocols.http_protocol import HttpProtocol
 
 
 if OS_IS_WINDOWS:  # no cov
@@ -217,6 +220,8 @@ class Sanic(
         "signal_router",
         "sock",
         "strict_slashes",
+        "_upgrade_listener_added",
+        "upgrade_tasks",
         "websocket_enabled",
         "websocket_tasks",
     )
@@ -381,6 +386,8 @@ class Sanic(
         self.signal_router: SignalRouter = signal_router or SignalRouter()
         self.sock: socket | None = None
         self.strict_slashes: bool = strict_slashes
+        self._upgrade_listener_added: bool = False
+        self.upgrade_tasks: set[Future[Any]] = set()
         self.websocket_enabled: bool = False
         self.websocket_tasks: set[Future[Any]] = set()
 
@@ -1379,6 +1386,14 @@ class Sanic(
                     context={"request": request},
                 )
 
+            if isinstance(response, Upgrade):
+                # The handler accepted an HTTP Upgrade. Until the 101
+                # response has been sent, regular HTTP error handling
+                # applies; afterwards the connection belongs to the
+                # upgrade handler.
+                await self._upgrade_handler(request, response)
+                return
+
             if request.responded:
                 if response is not None:
                     error_logger.error(
@@ -1480,6 +1495,39 @@ class Sanic(
                 ws.end_connection(1000)
             else:
                 await ws.close()
+
+    async def _upgrade_handler(self, request: Request, upgrade: Upgrade):
+        if self.asgi:
+            raise ServerError("HTTP Upgrade is not supported in ASGI mode")
+        if not self._upgrade_listener_added:
+            # If the server is stopped, cancel any ongoing upgrade
+            # handler tasks, to allow the server to exit promptly
+            self.listener("before_server_stop")(self._cancel_upgrade_tasks)
+            self._upgrade_listener_added = True
+        protocol = cast("HttpProtocol", request.transport.get_protocol())
+        # Sends the 101 response. Exceptions raised here are handled by
+        # the regular HTTP error handling in handle_request.
+        connection = await protocol.upgrade_handshake(request, upgrade)
+        # The 101 response has been sent. The connection now belongs to
+        # the upgrade handler; no HTTP error responses may be sent.
+        fut = ensure_future(upgrade.handler(request, connection))
+        # its future is kept in self.upgrade_tasks in case it
+        # needs to be cancelled due to the server being stopped
+        self.upgrade_tasks.add(fut)
+        try:
+            await fut
+        except CancelledError:  # type: ignore
+            # The connection was lost or the server is stopping
+            pass
+        except Exception as e:
+            # The upgrade handler failed after taking over. The 101 was
+            # already sent, so only log and close the connection.
+            self.error_handler.log(request, e)
+        finally:
+            self.upgrade_tasks.discard(fut)
+            # The handler returned (or failed) without closing the
+            # connection itself: Sanic releases the transport.
+            await connection.close()
 
     # -------------------------------------------------------------------- #
     # Testing
@@ -1605,6 +1653,11 @@ class Sanic(
     @classmethod
     def _cancel_websocket_tasks(cls, app):
         for task in app.websocket_tasks:
+            task.cancel()
+
+    @classmethod
+    def _cancel_upgrade_tasks(cls, app):
+        for task in app.upgrade_tasks:
             task.cancel()
 
     @staticmethod

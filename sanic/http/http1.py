@@ -71,6 +71,7 @@ class Http(Stream, metaclass=TouchUpMeta):
         "response_size",
         "response_bytes_left",
         "upgrade_websocket",
+        "upgraded",
         "perft0",
     ]
 
@@ -95,6 +96,7 @@ class Http(Stream, metaclass=TouchUpMeta):
         self.request: Request = None
         self.response: BaseHTTPResponse = None
         self.upgrade_websocket = False
+        self.upgraded = False
         self.url = None
         self.perft0 = None
 
@@ -123,12 +125,21 @@ class Http(Stream, metaclass=TouchUpMeta):
                 await self.protocol.request_handler(self.request)
 
                 # Handler finished, response should've been sent
-                if self.stage is Stage.HANDLER and not self.upgrade_websocket:
+                if (
+                    self.stage is Stage.HANDLER
+                    and not self.upgrade_websocket
+                    and not self.upgraded
+                ):
                     raise ServerError("Handler produced no response")
 
                 if self.stage is Stage.RESPONSE:
                     await self.response.send(end_stream=True)
             except CancelledError as exc:
+                if self.upgraded:
+                    # The connection was taken over by another protocol.
+                    # The HTTP layer must not write an error response.
+                    self.keep_alive = False
+                    return
                 # Write an appropriate response before exiting
                 if not self.protocol.transport:
                     logger.info(
