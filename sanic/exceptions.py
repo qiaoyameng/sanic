@@ -404,6 +404,52 @@ class URITooLong(HTTPException):
     quiet = True
 
 
+class UnsupportedMediaType(HTTPException):
+    """415 Unsupported Media Type
+
+    Raised when a route declares ``consumes`` media types and the incoming
+    request ``Content-Type`` does not match any of them.
+
+    Args:
+        message (Optional[Union[str, bytes]], optional): The message to be sent to the client. If `None`
+            then the HTTP status 'Unsupported Media Type' will be sent. Defaults to `None`.
+        quiet (Optional[bool], optional): When `True`, the error traceback will be suppressed
+            from the logs. Defaults to `None`.
+        context (Optional[Dict[str, Any]], optional): Additional mapping of key/value data that will be
+            sent to the client upon exception. Defaults to `None`.
+        extra (Optional[Dict[str, Any]], optional): Additional mapping of key/value data that will NOT be
+            sent to the client when in PRODUCTION mode. Defaults to `None`.
+        headers (Optional[Dict[str, Any]], optional): Additional headers that should be sent with the HTTP
+            response. Defaults to `None`.
+    """  # noqa: E501
+
+    status_code = 415
+    quiet = True
+
+
+class NotAcceptable(HTTPException):
+    """406 Not Acceptable
+
+    Raised when a route declares ``produces`` media types and none of them
+    can satisfy the request ``Accept`` header.
+
+    Args:
+        message (Optional[Union[str, bytes]], optional): The message to be sent to the client. If `None`
+            then the HTTP status 'Not Acceptable' will be sent. Defaults to `None`.
+        quiet (Optional[bool], optional): When `True`, the error traceback will be suppressed
+            from the logs. Defaults to `None`.
+        context (Optional[Dict[str, Any]], optional): Additional mapping of key/value data that will be
+            sent to the client upon exception. Defaults to `None`.
+        extra (Optional[Dict[str, Any]], optional): Additional mapping of key/value data that will NOT be
+            sent to the client when in PRODUCTION mode. Defaults to `None`.
+        headers (Optional[Dict[str, Any]], optional): Additional headers that should be sent with the HTTP
+            response. Defaults to `None`.
+    """  # noqa: E501
+
+    status_code = 406
+    quiet = True
+
+
 class HeaderNotFound(BadRequest):
     """400 Bad Request
 

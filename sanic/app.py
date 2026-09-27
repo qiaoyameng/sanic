@@ -1315,6 +1315,8 @@ class Sanic(
                 request.path,
                 request.method,
                 request.headers.getone("host", None),
+                request.headers.getone("content-type", None),
+                request.headers.getone("accept", None),
             )
 
             request._match_info = {**kwargs}

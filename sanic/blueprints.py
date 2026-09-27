@@ -404,6 +404,8 @@ class Blueprint(BaseSanic):
                 version_prefix,
                 route_error_format,
                 future.route_context,
+                future.consumes,
+                future.produces,
             )
 
             if (self, apply_route) in app._future_registry:

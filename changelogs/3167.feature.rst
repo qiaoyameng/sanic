@@ -1,0 +1,10 @@
+Adds ``consumes`` and ``produces`` to route declarations for content negotiation
+
+Multiple handlers can now be registered on the same path and method as long as
+they declare distinct ``consumes`` (request ``Content-Type``) and/or
+``produces`` (response, matched against the request ``Accept`` header) media
+types. At request time, Sanic first selects candidate handlers by
+``Content-Type`` (raising ``415 Unsupported Media Type`` when none match) and
+then picks the best response handler using ``Accept`` q-values, wildcards, and
+media type parameters (raising ``406 Not Acceptable`` when no representation
+can be produced). Ambiguous registrations are reported as errors at startup.

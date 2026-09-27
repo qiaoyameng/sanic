@@ -158,6 +158,39 @@ async def handler(request):
     ```
 
 
+## Content negotiation
+
+.. column::
+
+    A single path and method can be served by **multiple handlers** when they declare which media types they `consumes` (the request `Content-Type`) and/or `produces` (matched against the request `Accept` header). Sanic first selects candidate handlers by `Content-Type`, then picks the best response handler using the `Accept` header's q-values, wildcards, and media type parameters.
+
+.. column::
+
+    ```python
+    @app.post("/import", consumes="application/json", produces="application/json")
+    async def import_json(request):
+        return json({"ok": True})
+
+    @app.post("/import", consumes="text/csv", produces="text/csv")
+    async def import_csv(request):
+        return text("ok", content_type="text/csv")
+    ```
+
+.. column::
+
+    When no handler can consume the request body, Sanic responds with `415 Unsupported Media Type`. When no handler can produce an acceptable response, it responds with `406 Not Acceptable`. Registering two handlers whose media types overlap raises an error at startup.
+
+.. column::
+
+    ```python
+    # POST /import with Content-Type: application/xml
+    # --> 415 Unsupported Media Type
+
+    # POST /import with Content-Type: application/json
+    # and Accept: text/csv
+    # --> 406 Not Acceptable
+    ```
+
 ## Path parameters
 
 .. column::
