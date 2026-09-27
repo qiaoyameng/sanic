@@ -38,6 +38,7 @@ from typing import (
     cast,
     overload,
 )
+from unicodedata import normalize
 from urllib.parse import urlencode, urlunparse
 
 from sanic_routing.exceptions import FinalizationError, NotFound
@@ -1091,6 +1092,9 @@ class Sanic(
                     f"Required parameter `{param_info.name}` was not "
                     "passed to url_for"
                 )
+
+            if self.config.get("NFC_PATHS", False):
+                supplied_param = normalize("NFC", supplied_param)
 
             # determine if the parameter supplied by the caller
             # passes the test in the URL

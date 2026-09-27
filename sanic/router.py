@@ -4,6 +4,8 @@ from collections.abc import Iterable
 from functools import lru_cache
 from inspect import signature
 from typing import Any
+from unicodedata import normalize
+from urllib.parse import quote, unquote
 from uuid import UUID
 
 from sanic_routing import BaseRouter
@@ -22,11 +24,54 @@ ROUTER_CACHE_SIZE = 1024
 ALLOWED_LABELS = ("__file_uri__",)
 
 
+def normalize_nfc_path(path: str) -> str:
+    """Normalize a raw (still percent-encoded) URL path to NFC form.
+
+    Each segment is percent-decoded exactly once, normalized to Unicode
+    NFC, and re-encoded. Segments whose decoded form would contain a path
+    separator (``/`` or ``\\``) are left untouched so that encodings like
+    ``%2F``, ``%5C``, or double encodings like ``%252F`` can never be
+    turned into new path levels by normalization.
+
+    Args:
+        path (str): The raw request path.
+
+    Returns:
+        str: The canonical NFC, percent-encoded path used for matching.
+    """
+    if path.isascii() and "%" not in path:
+        return path
+    return "/".join(
+        _normalize_nfc_segment(segment) for segment in path.split("/")
+    )
+
+
+def _normalize_nfc_segment(segment: str) -> str:
+    decoded = unquote(segment, errors="replace")
+    if "/" in decoded or "\\" in decoded:
+        return segment
+    return quote(normalize("NFC", decoded))
+
+
 class Router(BaseRouter):
     """The router implementation responsible for routing a `Request` object to the appropriate handler."""  # noqa: E501
 
     DEFAULT_METHOD = "GET"
     ALLOWED_METHODS = HTTP_METHODS
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._nfc_origins: dict[str, str] = {}
+
+    @property
+    def nfc_paths(self) -> bool:
+        """Whether NFC path normalization mode is enabled.
+
+        Returns:
+            bool: True when the ``NFC_PATHS`` config option is enabled.
+        """
+        app = getattr(self.ctx, "app", None)
+        return bool(app and app.config.get("NFC_PATHS", False))
 
     def _get(
         self, path: str, method: str, host: str | None
@@ -48,7 +93,6 @@ class Router(BaseRouter):
                 else None,
             ) from None
 
-    @lru_cache(maxsize=ROUTER_CACHE_SIZE)
     def get(  # type: ignore
         self, path: str, method: str, host: str | None
     ) -> tuple[Route, RouteHandler, dict[str, Any]]:
@@ -72,6 +116,15 @@ class Router(BaseRouter):
         Returns:
             Tuple[Route, RouteHandler, Dict[str, Any]]: the route, handler, and match info
         """  # noqa: E501
+        __tracebackhide__ = True
+        if self.nfc_paths:
+            path = normalize_nfc_path(path)
+        return self._get_cached(path, method, host)
+
+    @lru_cache(maxsize=ROUTER_CACHE_SIZE)
+    def _get_cached(  # type: ignore
+        self, path: str, method: str, host: str | None
+    ) -> tuple[Route, RouteHandler, dict[str, Any]]:
         __tracebackhide__ = True
         return self._get(path, method, host)
 
@@ -116,6 +169,9 @@ class Router(BaseRouter):
             uri = "/".join([f"{version_prefix}{version}", uri.lstrip("/")])
 
         uri = self._normalize(uri, handler)
+
+        if self.nfc_paths:
+            uri = self._normalize_nfc_uri(uri, overwrite)
 
         params = dict(
             path=uri,
@@ -250,6 +306,20 @@ class Router(BaseRouter):
                 raise SanicException(
                     f"Invalid route: {route}. Parameter names cannot use '__'."
                 )
+
+    def _normalize_nfc_uri(self, uri: str, overwrite: bool) -> str:
+        normalized = normalize("NFC", uri)
+        origin = self._nfc_origins.setdefault(normalized, uri)
+        if origin != uri:
+            if not overwrite:
+                raise SanicException(
+                    "Route collision after NFC normalization: "
+                    f"{origin!r} and {uri!r} both normalize to "
+                    f"{normalized!r}. Routes must be unambiguous when "
+                    "the NFC_PATHS option is enabled."
+                )
+            self._nfc_origins[normalized] = uri
+        return normalized
 
     def _normalize(self, uri: str, handler: RouteHandler) -> str:
         if "<" not in uri:

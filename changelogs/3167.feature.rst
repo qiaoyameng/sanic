@@ -1,0 +1,3 @@
+Adds ``NFC_PATHS`` configuration value
+
+When enabled, request paths and route patterns are normalized to Unicode NFC so that equivalent Unicode spellings (for example composed vs decomposed ``é``) match the same route, and ``url_for`` generates the canonical NFC form. Normalization is applied per path segment after a single percent-decoding, so ``%2F``, ``%5C``, and double-encoded sequences can never introduce new path levels. Routes that would collide after normalization raise at registration time instead of silently overriding each other. Matching happens without any redirect, so all HTTP methods are preserved.
