@@ -671,6 +671,10 @@ class InvalidSignal(SanicException):
     """Exception raised when an invalid signal is sent."""
 
 
+class MiddlewareFinalizationError(SanicException):
+    """Exception raised when middleware dependencies cannot be resolved."""
+
+
 class WebsocketClosed(SanicException):
     """Exception raised when a websocket is closed."""
 

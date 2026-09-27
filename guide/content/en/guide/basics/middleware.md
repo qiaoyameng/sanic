@@ -238,4 +238,26 @@ Given the following setup, we should expect to see this in the console.
         ...
     ```
 
+### Middleware dependencies
+
+.. column::
+
+    When priority numbers are not expressive enough, middleware can be given a `name` and ordered explicitly with `before` and `after` declarations. Middleware without any dependencies continue to run in their priority and registration order. Dependencies are resolved when the application finalizes: application level and blueprint level middleware are merged first, and then Sanic validates that every referenced name exists and that the dependencies do not form a cycle. Errors are raised with the full dependency chain involved.
+
+.. column::
+
+    ```python
+    @app.on_request(name="auth")
+    async def authenticate(request):
+        ...
+
+    @app.on_request(after="auth")
+    async def audit_log(request):
+        ...
+
+    @bp.on_request(name="load_user", before="audit_log")
+    async def load_user(request):
+        ...
+    ```
+
 *Added in v22.9*

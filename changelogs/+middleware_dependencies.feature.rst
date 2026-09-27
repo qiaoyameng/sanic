@@ -1,0 +1,1 @@
+Add named middleware dependencies: middleware can now declare ``before``/``after`` constraints on other named middleware. Dependencies are resolved after application and blueprint middleware are merged, with unknown names and dependency cycles raising an error that includes the full dependency chain.
