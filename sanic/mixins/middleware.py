@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import deque
 from functools import partial
-from operator import attrgetter
 from typing import Callable, overload
 
 from sanic.base.meta import SanicMeta
@@ -28,6 +27,9 @@ class MiddlewareMixin(metaclass=SanicMeta):
         apply: bool = True,
         *,
         priority: int = 0,
+        name: str | None = None,
+        before: str | list[str] | None = None,
+        after: str | list[str] | None = None,
     ) -> MiddlewareType: ...
 
     @overload
@@ -38,6 +40,9 @@ class MiddlewareMixin(metaclass=SanicMeta):
         apply: bool = True,
         *,
         priority: int = 0,
+        name: str | None = None,
+        before: str | list[str] | None = None,
+        after: str | list[str] | None = None,
     ) -> Callable[[MiddlewareType], MiddlewareType]: ...
 
     def middleware(
@@ -47,6 +52,9 @@ class MiddlewareMixin(metaclass=SanicMeta):
         apply: bool = True,
         *,
         priority: int = 0,
+        name: str | None = None,
+        before: str | list[str] | None = None,
+        after: str | list[str] | None = None,
     ) -> MiddlewareType | Callable[[MiddlewareType], MiddlewareType]:
         """Decorator for registering middleware.
 
@@ -68,6 +76,13 @@ class MiddlewareMixin(metaclass=SanicMeta):
                 Defaults to `True`.
             priority (int, optional): The priority level of the middleware.
                 Lower numbers are executed first. Defaults to `0`.
+            name (str, optional): An optional name that other middleware can
+                use to declare a dependency on this middleware.
+                Defaults to `None`.
+            before (Union[str, List[str]], optional): Name(s) of middleware
+                that this middleware must run before. Defaults to `None`.
+            after (Union[str, List[str]], optional): Name(s) of middleware
+                that this middleware must run after. Defaults to `None`.
 
         Returns:
             Union[Callable, Callable[[Callable], Callable]]: The decorated
@@ -90,7 +105,14 @@ class MiddlewareMixin(metaclass=SanicMeta):
                 if attach_to == "request"
                 else MiddlewareLocation.RESPONSE
             )
-            middleware = Middleware(middleware, location, priority=priority)
+            middleware = Middleware(
+                middleware,
+                location,
+                priority=priority,
+                name=name,
+                before=before,
+                after=after,
+            )
             future_middleware = FutureMiddleware(middleware, attach_to)
             self._future_middleware.append(future_middleware)
             if apply:
@@ -107,7 +129,15 @@ class MiddlewareMixin(metaclass=SanicMeta):
                 register_middleware, attach_to=middleware_or_request
             )
 
-    def on_request(self, middleware=None, *, priority=0) -> MiddlewareType:
+    def on_request(
+        self,
+        middleware=None,
+        *,
+        priority=0,
+        name=None,
+        before=None,
+        after=None,
+    ) -> MiddlewareType:
         """Register a middleware to be called before a request is handled.
 
         This is the same as *@app.middleware('request')*.
@@ -115,6 +145,15 @@ class MiddlewareMixin(metaclass=SanicMeta):
         Args:
             middleware (Callable, optional): A callable that takes in a
                 request. Defaults to `None`.
+            priority (int, optional): The priority level of the middleware.
+                Defaults to `0`.
+            name (str, optional): An optional name that other middleware can
+                use to declare a dependency on this middleware.
+                Defaults to `None`.
+            before (Union[str, List[str]], optional): Name(s) of middleware
+                that this middleware must run before. Defaults to `None`.
+            after (Union[str, List[str]], optional): Name(s) of middleware
+                that this middleware must run after. Defaults to `None`.
 
         Returns:
             Callable: The decorated middleware function or a partial function
@@ -128,13 +167,33 @@ class MiddlewareMixin(metaclass=SanicMeta):
             ```
         """
         if callable(middleware):
-            return self.middleware(middleware, "request", priority=priority)
+            return self.middleware(
+                middleware,
+                "request",
+                priority=priority,
+                name=name,
+                before=before,
+                after=after,
+            )
         else:
             return partial(  # type: ignore
-                self.middleware, attach_to="request", priority=priority
+                self.middleware,
+                attach_to="request",
+                priority=priority,
+                name=name,
+                before=before,
+                after=after,
             )
 
-    def on_response(self, middleware=None, *, priority=0):
+    def on_response(
+        self,
+        middleware=None,
+        *,
+        priority=0,
+        name=None,
+        before=None,
+        after=None,
+    ):
         """Register a middleware to be called after a response is created.
 
         This is the same as *@app.middleware('response')*.
@@ -142,6 +201,15 @@ class MiddlewareMixin(metaclass=SanicMeta):
         Args:
             middleware (Callable, optional): A callable that takes in a
                 request and response. Defaults to `None`.
+            priority (int, optional): The priority level of the middleware.
+                Defaults to `0`.
+            name (str, optional): An optional name that other middleware can
+                use to declare a dependency on this middleware.
+                Defaults to `None`.
+            before (Union[str, List[str]], optional): Name(s) of middleware
+                that this middleware must run before. Defaults to `None`.
+            after (Union[str, List[str]], optional): Name(s) of middleware
+                that this middleware must run after. Defaults to `None`.
 
         Returns:
             Callable: The decorated middleware function or a partial function
@@ -155,10 +223,22 @@ class MiddlewareMixin(metaclass=SanicMeta):
             ```
         """
         if callable(middleware):
-            return self.middleware(middleware, "response", priority=priority)
+            return self.middleware(
+                middleware,
+                "response",
+                priority=priority,
+                name=name,
+                before=before,
+                after=after,
+            )
         else:
             return partial(
-                self.middleware, attach_to="response", priority=priority
+                self.middleware,
+                attach_to="response",
+                priority=priority,
+                name=name,
+                before=before,
+                after=after,
             )
 
     def finalize_middleware(self) -> None:
@@ -195,18 +275,16 @@ class MiddlewareMixin(metaclass=SanicMeta):
                 location=MiddlewareLocation.RESPONSE,
             )
             route.extra.request_middleware = deque(
-                sorted(
+                Middleware.resolve(
                     request_middleware,
-                    key=attrgetter("order"),
-                    reverse=True,
+                    location=MiddlewareLocation.REQUEST,
                 )
             )
             route.extra.response_middleware = deque(
-                sorted(
+                Middleware.resolve(
                     response_middleware,
-                    key=attrgetter("order"),
-                    reverse=True,
-                )[::-1]
+                    location=MiddlewareLocation.RESPONSE,
+                )
             )
         request_middleware = Middleware.convert(
             self.request_middleware,  # type: ignore
@@ -217,16 +295,14 @@ class MiddlewareMixin(metaclass=SanicMeta):
             location=MiddlewareLocation.RESPONSE,
         )
         self.request_middleware = deque(
-            sorted(
+            Middleware.resolve(
                 request_middleware,
-                key=attrgetter("order"),
-                reverse=True,
+                location=MiddlewareLocation.REQUEST,
             )
         )
         self.response_middleware = deque(
-            sorted(
+            Middleware.resolve(
                 response_middleware,
-                key=attrgetter("order"),
-                reverse=True,
-            )[::-1]
+                location=MiddlewareLocation.RESPONSE,
+            )
         )

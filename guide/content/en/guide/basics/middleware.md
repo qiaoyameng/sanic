@@ -239,3 +239,29 @@ Given the following setup, we should expect to see this in the console.
     ```
 
 *Added in v22.9*
+
+### Middleware dependencies
+
+.. column::
+
+    When priority numbers are not expressive enough, middleware can be given a `name` and declare explicit `before`/`after` dependencies on other named middleware. Dependencies are resolved across the application and any blueprints after they have been merged together, so a blueprint middleware can depend on an application middleware and vice versa. Middleware without any dependencies continue to run in priority and registration order.
+
+    Referencing an unknown name, or declaring dependencies that form a cycle, will raise an error when the application is finalized. The error message includes the full dependency chain to help track down the problem.
+
+.. column::
+
+    ```python
+    @app.on_request(name="auth")
+    async def authenticate(request):
+        ...
+
+    @app.on_request(after="auth")
+    async def load_user(request):
+        # runs after "auth"
+        ...
+
+    @bp.on_request(before="auth")
+    async def attach_request_id(request):
+        # blueprint middleware running before "auth"
+        ...
+    ```

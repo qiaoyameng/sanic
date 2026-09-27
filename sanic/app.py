@@ -466,6 +466,9 @@ class Sanic(
         attach_to: str = "request",
         *,
         priority: Default | int = _default,
+        name: str | None = None,
+        before: str | Iterable[str] | None = None,
+        after: str | Iterable[str] | None = None,
     ) -> MiddlewareType | Middleware:
         """Register a middleware to be called before a request is handled.
 
@@ -475,6 +478,15 @@ class Sanic(
                 Defaults to `'request'`.
             priority (int): The priority level of the middleware.
                 Lower numbers are executed first. Defaults to `0`.
+            name (str, optional): An optional name that other middleware can
+                use to declare a dependency on this middleware.
+                Defaults to `None`.
+            before (Union[str, Iterable[str]], optional): Name(s) of
+                middleware that this middleware must run before.
+                Defaults to `None`.
+            after (Union[str, Iterable[str]], optional): Name(s) of
+                middleware that this middleware must run after.
+                Defaults to `None`.
 
         Returns:
             Union[Callable, Callable[[Callable], Callable]]: The decorated
@@ -489,12 +501,33 @@ class Sanic(
                 middleware,
                 location=location,
                 priority=priority if isinstance(priority, int) else 0,
+                name=name,
+                before=before,
+                after=after,
             )
-        elif middleware.priority != priority and isinstance(priority, int):
+        elif (
+            (isinstance(priority, int) and middleware.priority != priority)
+            or (name is not None and middleware.name != name)
+            or (
+                before is not None
+                and middleware.before != Middleware._normalize(before)
+            )
+            or (
+                after is not None
+                and middleware.after != Middleware._normalize(after)
+            )
+        ):
             middleware = Middleware(
                 middleware.func,
                 location=middleware.location,
-                priority=priority,
+                priority=(
+                    priority
+                    if isinstance(priority, int)
+                    else middleware.priority
+                ),
+                name=name if name is not None else middleware.name,
+                before=before if before is not None else middleware.before,
+                after=after if after is not None else middleware.after,
             )
 
         if location is MiddlewareLocation.REQUEST:
@@ -512,6 +545,9 @@ class Sanic(
         attach_to: str = "request",
         *,
         priority: Default | int = _default,
+        name: str | None = None,
+        before: str | Iterable[str] | None = None,
+        after: str | Iterable[str] | None = None,
     ):
         """Used to register named middleqare (middleware typically on blueprints)
 
@@ -523,6 +559,15 @@ class Sanic(
                 Defaults to `'request'`.
             priority (int): The priority level of the middleware.
                 Lower numbers are executed first. Defaults to `0`.
+            name (str, optional): An optional name that other middleware can
+                use to declare a dependency on this middleware.
+                Defaults to `None`.
+            before (Union[str, Iterable[str]], optional): Name(s) of
+                middleware that this middleware must run before.
+                Defaults to `None`.
+            after (Union[str, Iterable[str]], optional): Name(s) of
+                middleware that this middleware must run after.
+                Defaults to `None`.
 
         Returns:
             Union[Callable, Callable[[Callable], Callable]]: The decorated
@@ -537,12 +582,33 @@ class Sanic(
                 middleware,
                 location=location,
                 priority=priority if isinstance(priority, int) else 0,
+                name=name,
+                before=before,
+                after=after,
             )
-        elif middleware.priority != priority and isinstance(priority, int):
+        elif (
+            (isinstance(priority, int) and middleware.priority != priority)
+            or (name is not None and middleware.name != name)
+            or (
+                before is not None
+                and middleware.before != Middleware._normalize(before)
+            )
+            or (
+                after is not None
+                and middleware.after != Middleware._normalize(after)
+            )
+        ):
             middleware = Middleware(
                 middleware.func,
                 location=middleware.location,
-                priority=priority,
+                priority=(
+                    priority
+                    if isinstance(priority, int)
+                    else middleware.priority
+                ),
+                name=name if name is not None else middleware.name,
+                before=before if before is not None else middleware.before,
+                after=after if after is not None else middleware.after,
             )
 
         if location is MiddlewareLocation.REQUEST:
